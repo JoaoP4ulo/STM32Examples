@@ -18,14 +18,15 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "i2c.h"
+#include "adc.h"
+#include "usb_device.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "usbd_cdc_if.h"
+#include "string.h"
 #include "stdbool.h"
-#include "stdio.h"
-#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -35,7 +36,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define DS3231_ADDRESS 0xD0
+#define NUM_ADC_CONV 1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -46,31 +47,24 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t buf[30] = {0};
-uint8_t data[sizeof(buf)] = {0};
-bool i2c_complete = false;
-
+uint16_t ADC_VAL[3] = {0};
+uint8_t adc_index = 0;
+bool ADC_complete = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+void SystemClock_Config(void);
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc);
+void ADC_Select_CH0 (void);
+void ADC_Select_CH1 (void);
+void ADC_Select_CH2 (void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-typedef struct
-{
-	uint8_t seconds;
-	uint8_t minutes;
-	uint8_t hour;
-	uint8_t dayofweek;
-	uint8_t dayofmonth;
-	uint8_t month;
-	uint8_t year;
-}Time;
-Time time;
+
 /* USER CODE END 0 */
 
 /**
@@ -101,27 +95,44 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_I2C1_Init();
+  MX_USB_DEVICE_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  Set_Time(00, 14, 13, 5, 3, 1, 19);
-
-  //HAL_I2C_Master_Receive_IT(&hi2c1, DS3231_ADDRESS, buf, sizeof(buf));
+  ADC_Select_CH0();
+  HAL_ADC_Start_IT(&hadc1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  Get_Time();
-	  HAL_Delay(1000);
-//	  if(i2c_complete == true)
-//	  {
-//		  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-//		  HAL_Delay(300);
-//		  i2c_complete = false;
-//		  HAL_I2C_Master_Receive_IT(&hi2c1, DS3231_ADDRESS, buf, sizeof(buf));
-//	  }
+	  if(ADC_complete) {
+	  		ADC_VAL[adc_index] = HAL_ADC_GetValue(&hadc1);
+	  		adc_index++;
 
+	  		if(adc_index > NUM_ADC_CONV) {
+	  			adc_index = 0;
+	  		}
+
+	  		ADC_complete = false;
+
+	  		switch(adc_index) {
+	  			case 0:
+	  				ADC_Select_CH0();
+	  				break;
+	  			case 1:
+	  				ADC_Select_CH1();
+	  				break;
+	  			case 2:
+	  				ADC_Select_CH2();
+	  				break;
+	  			default:
+	  				break;
+	  		}
+	  		HAL_ADC_Start_IT(&hadc1);
+	  CDC_Transmit_FS(0, 1);
+	  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+	  HAL_Delay(300);
 
     /* USER CODE END WHILE */
 
@@ -138,6 +149,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -148,7 +160,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL6;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -163,63 +175,65 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC|RCC_PERIPHCLK_USB;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV4;
+  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef *hi2c)
-{
-    if(hi2c == &hi2c1)
-    {
-    	memcpy(data,buf,sizeof(buf));
-    	i2c_complete = true;
-    }
-
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
+	ADC_complete = true;
 }
 
-uint8_t decToBcd(int val)
+void ADC_Select_CH0 (void)
 {
-  return (uint8_t)( (val/10*16) + (val%10) );
-}
-// Convert binary coded decimal to normal decimal numbers
-int bcdToDec(uint8_t val)
-{
-  return (int)( (val/16*10) + (val%16) );
-}
-
-void Set_Time (uint8_t sec, uint8_t min, uint8_t hour, uint8_t dow, uint8_t dom, uint8_t month, uint8_t year)
-{
-	uint8_t set_time[7];
-	set_time[0] = decToBcd(sec);
-	set_time[1] = decToBcd(min);
-	set_time[2] = decToBcd(hour);
-	set_time[3] = decToBcd(dow);
-	set_time[4] = decToBcd(dom);
-	set_time[5] = decToBcd(month);
-	set_time[6] = decToBcd(year);
-
-	HAL_I2C_Master_Transmit(&hi2c1, DS3231_ADDRESS, 0x00, 1, 1000);
+	ADC_ChannelConfTypeDef sConfig = {0};
+	  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+	  */
+	  sConfig.Channel = ADC_CHANNEL_0;
+	  sConfig.Rank = 1;
+	  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+	  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }
 }
 
-
-void Get_Time (void)
+void ADC_Select_CH1 (void)
 {
-	uint8_t get_time[7];
-	HAL_I2C_Master_Transmit(&hi2c1, DS3231_ADDRESS, 0x00, 1, 1000);
-	HAL_I2C_Master_Receive(&hi2c1, DS3231_ADDRESS, get_time, 7, 1000);
-	time.seconds = bcdToDec(get_time[0]);
-	time.minutes = bcdToDec(get_time[1]);
-	time.hour = bcdToDec(get_time[2]);
-	time.dayofweek = bcdToDec(get_time[3]);
-	time.dayofmonth = bcdToDec(get_time[4]);
-	time.month = bcdToDec(get_time[5]);
-	time.year = bcdToDec(get_time[6]);
+	ADC_ChannelConfTypeDef sConfig = {0};
+	  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+	  */
+	  sConfig.Channel = ADC_CHANNEL_1;
+	  sConfig.Rank = 1;
+	  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+	  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }
 }
 
-
+void ADC_Select_CH2 (void)
+{
+	ADC_ChannelConfTypeDef sConfig = {0};
+	  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+	  */
+	  sConfig.Channel = ADC_CHANNEL_2;
+	  sConfig.Rank = 1;
+	  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+	  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }
+}
 /* USER CODE END 4 */
 
 /**

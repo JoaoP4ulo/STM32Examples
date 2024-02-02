@@ -103,7 +103,7 @@ int main(void)
   MX_GPIO_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-  Set_Time(00, 14, 13, 5, 3, 1, 19);
+  Set_Time(00, 03, 14, 5, 3, 1, 19);
 
   //HAL_I2C_Master_Receive_IT(&hi2c1, DS3231_ADDRESS, buf, sizeof(buf));
   /* USER CODE END 2 */
@@ -113,7 +113,6 @@ int main(void)
   while (1)
   {
 	  Get_Time();
-	  HAL_Delay(1000);
 //	  if(i2c_complete == true)
 //	  {
 //		  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
@@ -201,15 +200,14 @@ void Set_Time (uint8_t sec, uint8_t min, uint8_t hour, uint8_t dow, uint8_t dom,
 	set_time[5] = decToBcd(month);
 	set_time[6] = decToBcd(year);
 
-	HAL_I2C_Master_Transmit(&hi2c1, DS3231_ADDRESS, 0x00, 1, 1000);
+	HAL_I2C_Mem_Write(&hi2c1, DS3231_ADDRESS, 0x00, 1, set_time, 7, 1000);
 }
 
 
 void Get_Time (void)
 {
 	uint8_t get_time[7];
-	HAL_I2C_Master_Transmit(&hi2c1, DS3231_ADDRESS, 0x00, 1, 1000);
-	HAL_I2C_Master_Receive(&hi2c1, DS3231_ADDRESS, get_time, 7, 1000);
+	HAL_I2C_Mem_Read(&hi2c1, DS3231_ADDRESS, 0x00, 1, get_time, 7, 1000);
 	time.seconds = bcdToDec(get_time[0]);
 	time.minutes = bcdToDec(get_time[1]);
 	time.hour = bcdToDec(get_time[2]);
